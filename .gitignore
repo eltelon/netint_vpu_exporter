@@ -23,3 +23,7 @@ go.work.sum
 
 # env file
 .env
+
+# Netint VPU Exporter bins
+netint_vpu_exporter_arm
+netint_vpu_exporter_x64
