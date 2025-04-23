@@ -4,7 +4,7 @@ project_name: netint_vpu_exporter
 
 release:
   github:
-    owner: zapping 
+    owner: eltelon 
     name: netint_vpu_exporter
   draft: false
   prerelease: false
