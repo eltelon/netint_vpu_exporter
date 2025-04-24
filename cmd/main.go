@@ -30,6 +30,7 @@ type Metadata struct {
 	NAMESPACE  string `json:"NAMESPACE"`
 	NUMA_NODE  int    `json:"NUMA_NODE"`
 	PCIE_ADDR  string `json:"PCIE_ADDR"`
+	TEMP       int    `json:"TEMP"`
 }
 
 func (c *Metadata) GetVal(field string) (int, error) {
@@ -44,6 +45,7 @@ func (c *Metadata) GetVal(field string) (int, error) {
 		"P2P_MEM":    c.P2P_MEM,
 		"NUMBER":     c.NUMBER,
 		"NUMA_NODE":  c.NUMA_NODE,
+		"TEMP":       c.TEMP,
 	}
 
 	value := fields[field]
@@ -70,9 +72,36 @@ type PromehtheusCounters struct {
 	AICounters       map[string]*prometheus.CounterVec
 }
 
+type NvmeMetadata struct {
+	CriticalWarning    int `json:"critical_warning"`
+	Temperature        int `json:"temperature"`
+	AvailSpare         int `json:"avail_spare"`
+	SpareThresh        int `json:"spare_thresh"`
+	PercentUsed        int `json:"percent_used"`
+	DataUnitsRead      int `json:"data_units_read"`
+	DataUnitsWritten   int `json:"data_units_written"`
+	HostReadCommands   int `json:"host_read_commands"`
+	HostWriteCommands  int `json:"host_write_commands"`
+	ControllerBusyTime int `json:"controller_busy_time"`
+	PowerCycles        int `json:"power_cycles"`
+	PowerOnHours       int `json:"power_on_hours"`
+	UnsafeShutdowns    int `json:"unsafe_shutdowns"`
+	MediaErrors        int `json:"media_errors"`
+	NumErrLogEntries   int `json:"num_err_log_entries"`
+	WarningTempTime    int `json:"warning_temp_time"`
+	CriticalCompTime   int `json:"critical_comp_time"`
+	TemperatureSensor1 int `json:"temperature_sensor_1"`
+	TemperatureSensor2 int `json:"temperature_sensor_2"`
+	ThmTemp1TransCount int `json:"thm_temp1_trans_count"`
+	ThmTemp2TransCount int `json:"thm_temp2_trans_count"`
+	ThmTemp1TotalTime  int `json:"thm_temp1_total_time"`
+	ThmTemp2TotalTime  int `json:"thm_temp2_total_time"`
+}
+
 var METRIC_LABELS = []string{
 	"LOAD", "MODEL_LOAD", "FW_LOAD", "INST", "MAX_INST",
 	"MEM", "SHARE_MEM", "P2P_MEM", "NUMBER", "NUMA_NODE",
+	"TEMP",
 }
 
 var (
@@ -173,6 +202,11 @@ func runCollector(promehtheusCounters *PromehtheusCounters) {
 		log.Error().Err(err).Msg("Error unmarshaling JSON")
 		return
 	}
+	updateTemperatureForDevices(&devices.Decoders)
+	updateTemperatureForDevices(&devices.Encoders)
+	updateTemperatureForDevices(&devices.Uploaders)
+	updateTemperatureForDevices(&devices.Scalers)
+	updateTemperatureForDevices(&devices.AIs)
 
 	updateMetrics(devices.Decoders, promehtheusCounters.DecoderCounters)
 	updateMetrics(devices.Encoders, promehtheusCounters.EncoderCounters)
@@ -199,4 +233,31 @@ func updateMetrics(components []Metadata, counters map[string]*prometheus.Counte
 			counters[field].With(labels).Add(float64(value))
 		}
 	}
+}
+
+func updateTemperatureForDevices(devices *[]Metadata) {
+	for i := range *devices {
+		temp, err := getNVMeTemperature((*devices)[i].DEVICE)
+		if err != nil {
+			log.Error().Err(err).Msgf("Error getting temperature for device %s", (*devices)[i].DEVICE)
+			continue
+		}
+		// Se restan 273 por que los entrega en kelvin
+		(*devices)[i].TEMP = temp - 273
+	}
+}
+
+func getNVMeTemperature(deviceName string) (int, error) {
+	cmd := exec.Command("nvme", "smart-log", deviceName, "-o", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("error executing nvme smart-log: %v", err)
+	}
+	var nvmeMetadata NvmeMetadata
+	err = json.Unmarshal(output, &nvmeMetadata)
+	if err != nil {
+		return 0, fmt.Errorf("error unmarshaling nvme smart-log output: %v", err)
+	}
+
+	return nvmeMetadata.Temperature, nil
 }
