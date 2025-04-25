@@ -190,7 +190,7 @@ func initCounters(registry *prometheus.Registry, prometheusCounters *Promehtheus
 }
 
 func runCollector(promehtheusCounters *PromehtheusCounters) {
-	cmd := exec.Command("sh", "-c", " ni_rsrc_mon -o json1 | sed '1d;2d;$d'")
+	cmd := exec.Command("sh", "-c", " ni_rsrc_mon -o json1 ")
 	output, err := cmd.Output()
 	if err != nil {
 		log.Error().Err(err).Msg("Error executing command")
