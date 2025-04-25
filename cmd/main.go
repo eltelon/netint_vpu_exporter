@@ -196,23 +196,31 @@ func runCollector(promehtheusCounters *PromehtheusCounters) {
 		log.Error().Err(err).Msg("Error executing command")
 		return
 	}
-	var devices Devices
-	err = json.Unmarshal(output, &devices)
+	jsonBlocks, err := extractAllJSONObjects(string(output))
 	if err != nil {
-		log.Error().Err(err).Msg("Error unmarshaling JSON")
+		log.Error().Err(err).Msg("unable to extract JSON objects from the output")
 		return
 	}
-	updateTemperatureForDevices(&devices.Decoders)
-	updateTemperatureForDevices(&devices.Encoders)
-	updateTemperatureForDevices(&devices.Uploaders)
-	updateTemperatureForDevices(&devices.Scalers)
-	updateTemperatureForDevices(&devices.AIs)
+	for _, jsonStr := range jsonBlocks {
+		var devices Devices
+		err = json.Unmarshal([]byte(jsonStr), &devices)
+		if err != nil {
+			log.Error().Err(err).Msg("Error unmarshaling JSON")
+			continue
+		}
 
-	updateMetrics(devices.Decoders, promehtheusCounters.DecoderCounters)
-	updateMetrics(devices.Encoders, promehtheusCounters.EncoderCounters)
-	updateMetrics(devices.Uploaders, promehtheusCounters.UploaderCounters)
-	updateMetrics(devices.Scalers, promehtheusCounters.ScalerCounters)
-	updateMetrics(devices.AIs, promehtheusCounters.AICounters)
+		updateTemperatureForDevices(&devices.Decoders)
+		updateTemperatureForDevices(&devices.Encoders)
+		updateTemperatureForDevices(&devices.Uploaders)
+		updateTemperatureForDevices(&devices.Scalers)
+		updateTemperatureForDevices(&devices.AIs)
+
+		updateMetrics(devices.Decoders, promehtheusCounters.DecoderCounters)
+		updateMetrics(devices.Encoders, promehtheusCounters.EncoderCounters)
+		updateMetrics(devices.Uploaders, promehtheusCounters.UploaderCounters)
+		updateMetrics(devices.Scalers, promehtheusCounters.ScalerCounters)
+		updateMetrics(devices.AIs, promehtheusCounters.AICounters)
+	}
 	log.Debug().Msg("Metrics updated")
 }
 
@@ -260,4 +268,31 @@ func getNVMeTemperature(deviceName string) (int, error) {
 	}
 
 	return nvmeMetadata.Temperature, nil
+}
+
+func extractAllJSONObjects(output string) ([]string, error) {
+	var results []string
+	start := -1
+	stack := 0
+
+	for i, r := range output {
+		if r == '{' {
+			if stack == 0 {
+				start = i
+			}
+			stack++
+		} else if r == '}' {
+			stack--
+			if stack == 0 && start != -1 {
+				results = append(results, output[start:i+1])
+				start = -1
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		log.Error().Msg("No valid JSON blocks found")
+		return nil, nil
+	}
+	return results, nil
 }
