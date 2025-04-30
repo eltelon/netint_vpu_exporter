@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"netint_vpu_exporter/internal/config"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin"
@@ -16,60 +19,29 @@ import (
 )
 
 type Metadata struct {
-	NUMBER     int    `json:"NUMBER"`
-	INDEX      int    `json:"INDEX"`
-	LOAD       int    `json:"LOAD"`
-	MODEL_LOAD int    `json:"MODEL_LOAD"`
-	FW_LOAD    int    `json:"FW_LOAD"`
-	INST       int    `json:"INST"`
-	MAX_INST   int    `json:"MAX_INST"`
-	MEM        int    `json:"MEM"`
-	SHARE_MEM  int    `json:"SHARE_MEM"`
-	P2P_MEM    int    `json:"P2P_MEM"`
-	DEVICE     string `json:"DEVICE"`
-	NAMESPACE  string `json:"NAMESPACE"`
-	NUMA_NODE  int    `json:"NUMA_NODE"`
-	PCIE_ADDR  string `json:"PCIE_ADDR"`
-	TEMP       int    `json:"TEMP"`
+	INDEX      int
+	LOAD       int
+	MODEL_LOAD int
+	INST       int
+	MEM        int
+	SHARE_MEM  int
+	P2P_MEM    int
+	DEVICE     string
+	NAMESPACE  string
+	TEMP       int
 }
-
-func (c *Metadata) GetVal(field string) (int, error) {
-	fields := map[string]int{
-		"LOAD":       c.LOAD,
-		"MODEL_LOAD": c.MODEL_LOAD,
-		"FW_LOAD":    c.FW_LOAD,
-		"INST":       c.INST,
-		"MAX_INST":   c.MAX_INST,
-		"MEM":        c.MEM,
-		"SHARE_MEM":  c.SHARE_MEM,
-		"P2P_MEM":    c.P2P_MEM,
-		"NUMBER":     c.NUMBER,
-		"NUMA_NODE":  c.NUMA_NODE,
-		"TEMP":       c.TEMP,
-	}
-
-	value := fields[field]
-	if value < 0 {
-		return 0, fmt.Errorf("invalid value for field %s", field)
-	}
-	return value, nil
-}
-
 type Devices struct {
-	Decoders  []Metadata `json:"decoders"`
-	Encoders  []Metadata `json:"encoders"`
-	Uploaders []Metadata `json:"uploaders"`
-	Scalers   []Metadata `json:"scalers"`
-	AIs       []Metadata `json:"AIs"`
-	Nvmes     []Metadata `json:"nvmes"`
+	Decoders []Metadata
+	Encoders []Metadata
+	Scalers  []Metadata
+	AIs      []Metadata
 }
 
-type PromehtheusCounters struct {
-	DecoderCounters  map[string]*prometheus.CounterVec
-	EncoderCounters  map[string]*prometheus.CounterVec
-	UploaderCounters map[string]*prometheus.CounterVec
-	ScalerCounters   map[string]*prometheus.CounterVec
-	AICounters       map[string]*prometheus.CounterVec
+type PrometheusCounters struct {
+	DecoderCounters map[string]*prometheus.CounterVec
+	EncoderCounters map[string]*prometheus.CounterVec
+	ScalerCounters  map[string]*prometheus.CounterVec
+	AICounters      map[string]*prometheus.CounterVec
 }
 
 type NvmeMetadata struct {
@@ -99,9 +71,25 @@ type NvmeMetadata struct {
 }
 
 var METRIC_LABELS = []string{
-	"LOAD", "MODEL_LOAD", "FW_LOAD", "INST", "MAX_INST",
-	"MEM", "SHARE_MEM", "P2P_MEM", "NUMBER", "NUMA_NODE",
-	"TEMP",
+	"LOAD", "MODEL_LOAD", "INST", "MEM", "SHARE_MEM", "P2P_MEM", "TEMP",
+}
+
+func (c *Metadata) GetVal(field string) (int, error) {
+	fields := map[string]int{
+		"LOAD":       c.LOAD,
+		"MODEL_LOAD": c.MODEL_LOAD,
+		"INST":       c.INST,
+		"MEM":        c.MEM,
+		"SHARE_MEM":  c.SHARE_MEM,
+		"P2P_MEM":    c.P2P_MEM,
+		"TEMP":       c.TEMP,
+	}
+
+	value := fields[field]
+	if value < 0 {
+		return 0, fmt.Errorf("invalid value for field %s", field)
+	}
+	return value, nil
 }
 
 var (
@@ -115,16 +103,13 @@ func main() {
 	config.ConfigureZeroLog(*logLevel)
 
 	registry := prometheus.NewRegistry()
-	prometheusCounters := PromehtheusCounters{
-		DecoderCounters:  make(map[string]*prometheus.CounterVec),
-		EncoderCounters:  make(map[string]*prometheus.CounterVec),
-		UploaderCounters: make(map[string]*prometheus.CounterVec),
-		ScalerCounters:   make(map[string]*prometheus.CounterVec),
-		AICounters:       make(map[string]*prometheus.CounterVec),
+	prometheusCounters := PrometheusCounters{
+		DecoderCounters: make(map[string]*prometheus.CounterVec),
+		EncoderCounters: make(map[string]*prometheus.CounterVec),
+		ScalerCounters:  make(map[string]*prometheus.CounterVec),
+		AICounters:      make(map[string]*prometheus.CounterVec),
 	}
 	initCounters(registry, &prometheusCounters)
-
-	//channels, singals, for, etc
 
 	go func() {
 		for {
@@ -142,7 +127,7 @@ func main() {
 	log.Fatal().Err(http.ListenAndServe(*listenAddr, nil)).Msg("Error starting server")
 }
 
-func initCounters(registry *prometheus.Registry, prometheusCounters *PromehtheusCounters) {
+func initCounters(registry *prometheus.Registry, prometheusCounters *PrometheusCounters) {
 
 	for _, field := range METRIC_LABELS {
 		prometheusCounters.DecoderCounters[field] = prometheus.NewCounterVec(
@@ -150,86 +135,67 @@ func initCounters(registry *prometheus.Registry, prometheusCounters *Promehtheus
 				Name: fmt.Sprintf("netint_decoder_%s_total", field),
 				Help: fmt.Sprintf("Total %s for decoder", field),
 			},
-			[]string{"index", "device", "pcie_addr"},
+			[]string{"index", "device"},
 		)
 		prometheusCounters.EncoderCounters[field] = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: fmt.Sprintf("netint_encoder_%s_total", field),
 				Help: fmt.Sprintf("Total %s for encoder", field),
 			},
-			[]string{"index", "device", "pcie_addr"},
-		)
-		prometheusCounters.UploaderCounters[field] = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: fmt.Sprintf("netint_uploader_%s_total", field),
-				Help: fmt.Sprintf("Total %s for uploader", field),
-			},
-			[]string{"index", "device", "pcie_addr"},
+			[]string{"index", "device"},
 		)
 		prometheusCounters.ScalerCounters[field] = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: fmt.Sprintf("netint_scaler_%s_total", field),
 				Help: fmt.Sprintf("Total %s for scaler", field),
 			},
-			[]string{"index", "device", "pcie_addr"},
+			[]string{"index", "device"},
 		)
 		prometheusCounters.AICounters[field] = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: fmt.Sprintf("netint_ai_%s_total", field),
 				Help: fmt.Sprintf("Total %s for AI", field),
 			},
-			[]string{"index", "device", "pcie_addr"},
+			[]string{"index", "device"},
 		)
 		registry.MustRegister(prometheusCounters.DecoderCounters[field])
 		registry.MustRegister(prometheusCounters.EncoderCounters[field])
-		registry.MustRegister(prometheusCounters.UploaderCounters[field])
 		registry.MustRegister(prometheusCounters.ScalerCounters[field])
 		registry.MustRegister(prometheusCounters.AICounters[field])
 	}
 	log.Info().Msg("Counters initialized")
 }
 
-func runCollector(promehtheusCounters *PromehtheusCounters) {
-	cmd := exec.Command("sh", "-c", "ni_rsrc_mon -o json1")
+func runCollector(prometheusCounters *PrometheusCounters) {
+	cmd := exec.Command("sh", "-c", "ni_rsrc_mon -o text")
 	output, err := cmd.Output()
 	if err != nil {
 		log.Error().Err(err).Msg("Error executing command")
 		return
 	}
-	jsonBlocks, err := extractAllJSONObjects(string(output))
+	devices, err := parseStatsFromString(string(output))
 	if err != nil {
-		log.Error().Err(err).Msg("unable to extract JSON objects from the output")
+		log.Error().Err(err).Msg("Error al analizar la salida:")
 		return
 	}
-	for _, jsonStr := range jsonBlocks {
-		var devices Devices
-		err = json.Unmarshal([]byte(jsonStr), &devices)
-		if err != nil {
-			log.Error().Err(err).Msg("Error unmarshaling JSON")
-			continue
-		}
+	fmt.Printf("Devices: %+v\n", devices)
+	updateTemperatureForDevices(&devices.Decoders)
+	updateTemperatureForDevices(&devices.Encoders)
+	updateTemperatureForDevices(&devices.Scalers)
+	updateTemperatureForDevices(&devices.AIs)
+	updateMetrics(devices.Decoders, prometheusCounters.DecoderCounters)
+	updateMetrics(devices.Encoders, prometheusCounters.EncoderCounters)
+	updateMetrics(devices.Scalers, prometheusCounters.ScalerCounters)
+	updateMetrics(devices.AIs, prometheusCounters.AICounters)
 
-		updateTemperatureForDevices(&devices.Decoders)
-		updateTemperatureForDevices(&devices.Encoders)
-		updateTemperatureForDevices(&devices.Uploaders)
-		updateTemperatureForDevices(&devices.Scalers)
-		updateTemperatureForDevices(&devices.AIs)
-
-		updateMetrics(devices.Decoders, promehtheusCounters.DecoderCounters)
-		updateMetrics(devices.Encoders, promehtheusCounters.EncoderCounters)
-		updateMetrics(devices.Uploaders, promehtheusCounters.UploaderCounters)
-		updateMetrics(devices.Scalers, promehtheusCounters.ScalerCounters)
-		updateMetrics(devices.AIs, promehtheusCounters.AICounters)
-	}
 	log.Debug().Msg("Metrics updated")
 }
 
 func updateMetrics(components []Metadata, counters map[string]*prometheus.CounterVec) {
 	for _, c := range components {
 		labels := prometheus.Labels{
-			"index":     fmt.Sprintf("%d", c.INDEX),
-			"device":    c.DEVICE,
-			"pcie_addr": c.PCIE_ADDR,
+			"index":  fmt.Sprintf("%d", c.INDEX),
+			"device": c.DEVICE,
 		}
 
 		for _, field := range METRIC_LABELS {
@@ -243,14 +209,112 @@ func updateMetrics(components []Metadata, counters map[string]*prometheus.Counte
 	}
 }
 
+func parseStatsFromString(output string) (*Devices, error) {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	var devices Devices
+	var current *[]Metadata
+	var bestHeader bool
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		switch {
+		case strings.HasPrefix(line, "Num decoders:"):
+			current = &devices.Decoders
+			bestHeader = false
+		case strings.HasPrefix(line, "Num encoders:"):
+			current = &devices.Encoders
+			bestHeader = false
+		case strings.HasPrefix(line, "Num scalers:"):
+			current = &devices.Scalers
+			bestHeader = false
+		case strings.HasPrefix(line, "Num AIs:"):
+			current = &devices.AIs
+			bestHeader = false
+		case strings.Contains(line, "BEST INDEX"):
+			bestHeader = true
+			continue
+		case strings.HasPrefix(line, "INDEX"):
+			bestHeader = false
+			continue
+		case line == "" || strings.HasPrefix(line, "*"):
+			continue
+		default:
+			if current == nil {
+				continue
+			}
+			fields := strings.Fields(line)
+
+			if bestHeader {
+				offset := 0
+				if fields[0] == "L" || fields[0] == "" {
+					offset = 1
+				}
+
+				if len(fields) < offset+7 {
+					log.Warn().Msgf("Skipping malformed BEST line: %s", line)
+					continue
+				}
+
+				index, _ := strconv.Atoi(fields[offset+0])
+				load, _ := strconv.Atoi(fields[offset+1])
+				modelLoad, _ := strconv.Atoi(fields[offset+2])
+				mem, _ := strconv.Atoi(fields[offset+3])
+				inst, _ := strconv.Atoi(fields[offset+4])
+				device := fields[offset+5]
+				namespace := fields[offset+6]
+
+				*current = append(*current, Metadata{
+					INDEX:      index,
+					LOAD:       load,
+					MODEL_LOAD: modelLoad,
+					INST:       inst,
+					MEM:        mem,
+					DEVICE:     device,
+					NAMESPACE:  namespace,
+					SHARE_MEM:  0,
+					P2P_MEM:    0,
+				})
+			} else {
+				if len(fields) < 9 {
+					log.Warn().Msgf("Skipping malformed standard line: %s", line)
+					continue
+				}
+				index, _ := strconv.Atoi(fields[0])
+				load, _ := strconv.Atoi(fields[1])
+				modelLoad, _ := strconv.Atoi(fields[2])
+				inst, _ := strconv.Atoi(fields[3])
+				mem, _ := strconv.Atoi(fields[4])
+				shareMem, _ := strconv.Atoi(fields[5])
+				p2pMem, _ := strconv.Atoi(fields[6])
+				device := fields[7]
+				namespace := fields[8]
+
+				*current = append(*current, Metadata{
+					INDEX:      index,
+					LOAD:       load,
+					MODEL_LOAD: modelLoad,
+					INST:       inst,
+					MEM:        mem,
+					SHARE_MEM:  shareMem,
+					P2P_MEM:    p2pMem,
+					DEVICE:     device,
+					NAMESPACE:  namespace,
+				})
+			}
+		}
+	}
+	return &devices, scanner.Err()
+}
+
 func updateTemperatureForDevices(devices *[]Metadata) {
 	for i := range *devices {
 		temp, err := getNVMeTemperature((*devices)[i].DEVICE)
+		fmt.Printf("Device: %s, Temperature: %d\n", (*devices)[i].DEVICE, temp)
 		if err != nil {
 			log.Error().Err(err).Msgf("Error getting temperature for device %s", (*devices)[i].DEVICE)
 			continue
 		}
-		// Se restan 273 por que los entrega en kelvin
 		(*devices)[i].TEMP = temp - 273
 	}
 }
@@ -268,31 +332,4 @@ func getNVMeTemperature(deviceName string) (int, error) {
 	}
 
 	return nvmeMetadata.Temperature, nil
-}
-
-func extractAllJSONObjects(output string) ([]string, error) {
-	var results []string
-	start := -1
-	stack := 0
-
-	for i, r := range output {
-		if r == '{' {
-			if stack == 0 {
-				start = i
-			}
-			stack++
-		} else if r == '}' {
-			stack--
-			if stack == 0 && start != -1 {
-				results = append(results, output[start:i+1])
-				start = -1
-			}
-		}
-	}
-
-	if len(results) == 0 {
-		log.Error().Msg("No valid JSON blocks found")
-		return nil, nil
-	}
-	return results, nil
 }
