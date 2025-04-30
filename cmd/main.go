@@ -38,10 +38,10 @@ type Devices struct {
 }
 
 type PrometheusCounters struct {
-	DecoderCounters map[string]*prometheus.CounterVec
-	EncoderCounters map[string]*prometheus.CounterVec
-	ScalerCounters  map[string]*prometheus.CounterVec
-	AICounters      map[string]*prometheus.CounterVec
+	DecoderCounters map[string]*prometheus.GaugeVec
+	EncoderCounters map[string]*prometheus.GaugeVec
+	ScalerCounters  map[string]*prometheus.GaugeVec
+	AICounters      map[string]*prometheus.GaugeVec
 }
 
 type NvmeMetadata struct {
@@ -104,10 +104,10 @@ func main() {
 
 	registry := prometheus.NewRegistry()
 	prometheusCounters := PrometheusCounters{
-		DecoderCounters: make(map[string]*prometheus.CounterVec),
-		EncoderCounters: make(map[string]*prometheus.CounterVec),
-		ScalerCounters:  make(map[string]*prometheus.CounterVec),
-		AICounters:      make(map[string]*prometheus.CounterVec),
+		DecoderCounters: make(map[string]*prometheus.GaugeVec),
+		EncoderCounters: make(map[string]*prometheus.GaugeVec),
+		ScalerCounters:  make(map[string]*prometheus.GaugeVec),
+		AICounters:      make(map[string]*prometheus.GaugeVec),
 	}
 	initCounters(registry, &prometheusCounters)
 
@@ -130,29 +130,29 @@ func main() {
 func initCounters(registry *prometheus.Registry, prometheusCounters *PrometheusCounters) {
 
 	for _, field := range METRIC_LABELS {
-		prometheusCounters.DecoderCounters[field] = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
+		prometheusCounters.DecoderCounters[field] = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
 				Name: fmt.Sprintf("netint_decoder_%s_total", field),
 				Help: fmt.Sprintf("Total %s for decoder", field),
 			},
 			[]string{"index", "device"},
 		)
-		prometheusCounters.EncoderCounters[field] = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
+		prometheusCounters.EncoderCounters[field] = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
 				Name: fmt.Sprintf("netint_encoder_%s_total", field),
 				Help: fmt.Sprintf("Total %s for encoder", field),
 			},
 			[]string{"index", "device"},
 		)
-		prometheusCounters.ScalerCounters[field] = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
+		prometheusCounters.ScalerCounters[field] = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
 				Name: fmt.Sprintf("netint_scaler_%s_total", field),
 				Help: fmt.Sprintf("Total %s for scaler", field),
 			},
 			[]string{"index", "device"},
 		)
-		prometheusCounters.AICounters[field] = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
+		prometheusCounters.AICounters[field] = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
 				Name: fmt.Sprintf("netint_ai_%s_total", field),
 				Help: fmt.Sprintf("Total %s for AI", field),
 			},
@@ -191,7 +191,7 @@ func runCollector(prometheusCounters *PrometheusCounters) {
 	log.Debug().Msg("Metrics updated")
 }
 
-func updateMetrics(components []Metadata, counters map[string]*prometheus.CounterVec) {
+func updateMetrics(components []Metadata, counters map[string]*prometheus.GaugeVec) {
 	for _, c := range components {
 		labels := prometheus.Labels{
 			"index":  fmt.Sprintf("%d", c.INDEX),
@@ -204,7 +204,7 @@ func updateMetrics(components []Metadata, counters map[string]*prometheus.Counte
 				log.Error().Err(err).Msgf("Error getting value for field %s", field)
 				continue
 			}
-			counters[field].With(labels).Add(float64(value))
+			counters[field].With(labels).Set(float64(value))
 		}
 	}
 }

@@ -8,7 +8,7 @@ build:
 
 deployt:
 	make build
-	ssh root@10.10.40.131 -p12500 "rm -rf /srv/production/netint_vpu_exporter/netint_vpu_exporter_x64"
-	scp -P 12500 ./netint_vpu_exporter_x64 root@10.10.40.131:/srv/production/netint_vpu_exporter/
-	ssh root@10.10.40.131 -p12500 "cd /srv/production/netint_vpu_exporter/ && ./netint_vpu_exporter_x64"
+	ssh root@10.10.40.130 -p12500 "rm -rf /srv/production/netint_vpu_exporter/netint_vpu_exporter_arm"
+	scp -P 12500 ./netint_vpu_exporter_arm root@10.10.40.130:/srv/production/netint_vpu_exporter/
+	ssh root@10.10.40.130 -p12500 "cd /srv/production/netint_vpu_exporter/ && ./netint_vpu_exporter_arm"
 	
