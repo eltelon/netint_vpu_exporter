@@ -276,7 +276,7 @@ func parseStatsFromString(output string) (*Devices, error) {
 					P2P_MEM:    0,
 				})
 			} else {
-				if len(fields) < 9 {
+				if len(fields) < 8 {
 					log.Warn().Msgf("Skipping malformed standard line: %s", line)
 					continue
 				}
@@ -288,7 +288,10 @@ func parseStatsFromString(output string) (*Devices, error) {
 				shareMem, _ := strconv.Atoi(fields[5])
 				p2pMem, _ := strconv.Atoi(fields[6])
 				device := fields[7]
-				namespace := fields[8]
+				namespace := ""
+				if len(fields) > 8 {
+					namespace = fields[8]
+				}
 
 				*current = append(*current, Metadata{
 					INDEX:      index,
