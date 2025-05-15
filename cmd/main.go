@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"netint_vpu_exporter/internal/config"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -391,28 +393,6 @@ func readSysload() (float64, float64, float64, error) {
 	}
 
 	return load1, load5, load15, nil
-}
-package main
-
-import (
-	"bufio"
-	"bytes"
-	"fmt"
-	"os/exec"
-	"regexp"
-	"strings"
-)
-
-func main() {
-	deviceToChannel, err := getDeviceChannelMap()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-
-	for device, channel := range deviceToChannel {
-		fmt.Printf("Dispositivo NVMe: %s, Canal: %s\n", device, channel)
-	}
 }
 
 func getDeviceChannelMap() (map[string]string, error) {
