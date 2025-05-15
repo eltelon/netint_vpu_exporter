@@ -141,7 +141,7 @@ func main() {
 			for device, channel := range deviceToChannel {
 				fmt.Printf("Dispositivo NVMe: %s, Canal: %s\n", device, channel)
 			}
-			time.Sleep(time.Second * 30)
+			time.Sleep(time.Second * 5)
 		}
 	}()
 
