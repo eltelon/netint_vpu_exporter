@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"netint_vpu_exporter/internal/config"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -94,9 +96,10 @@ func (c *Metadata) GetVal(field string) (int, error) {
 }
 
 var (
-	listenAddr   = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9836").String()
-	logLevel     = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").String()
-	sysloadGauge *prometheus.GaugeVec
+	listenAddr         = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9836").String()
+	logLevel           = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").String()
+	sysloadGauge       *prometheus.GaugeVec
+	deviceChannelGauge *prometheus.GaugeVec
 )
 
 func main() {
@@ -112,7 +115,15 @@ func main() {
 		},
 		[]string{"interval"},
 	)
+	deviceChannelGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "netint_device_channel_active",
+			Help: "Indicates active channels associated with an NVMe device",
+		},
+		[]string{"device", "channel"},
+	)
 	registry.MustRegister(sysloadGauge)
+	registry.MustRegister(deviceChannelGauge)
 	prometheusCounters := PrometheusCounters{
 		DecoderCounters: make(map[string]*prometheus.GaugeVec),
 		EncoderCounters: make(map[string]*prometheus.GaugeVec),
@@ -185,10 +196,9 @@ func runCollector(prometheusCounters *PrometheusCounters) {
 	}
 	devices, err := parseStatsFromString(string(output))
 	if err != nil {
-		log.Error().Err(err).Msg("Error al analizar la salida:")
+		log.Error().Err(err).Msgf("Error parsing output:")
 		return
 	}
-	fmt.Printf("Devices: %+v\n", devices)
 	updateTemperatureForDevices(&devices.Decoders)
 	updateTemperatureForDevices(&devices.Encoders)
 	updateTemperatureForDevices(&devices.Scalers)
@@ -199,13 +209,25 @@ func runCollector(prometheusCounters *PrometheusCounters) {
 	updateMetrics(devices.AIs, prometheusCounters.AICounters)
 	load1, load5, load15, err := readSysload()
 	if err != nil {
-		log.Error().Err(err).Msg("Error leyendo carga del sistema")
+		log.Error().Err(err).Msg("Error reading system load")
 	} else {
 		sysloadGauge.WithLabelValues("1m").Set(load1)
 		sysloadGauge.WithLabelValues("5m").Set(load5)
 		sysloadGauge.WithLabelValues("15m").Set(load15)
 	}
-
+	deviceChannels, err := getDeviceChannels()
+	if err != nil {
+		log.Error().Err(err).Msg("Error obtaining device channels")
+	} else {
+		for device, canales := range deviceChannels {
+			for _, canal := range canales {
+				deviceChannelGauge.With(prometheus.Labels{
+					"device":  device,
+					"channel": canal,
+				}).Set(1)
+			}
+		}
+	}
 	log.Debug().Msg("Metrics updated")
 }
 
@@ -331,7 +353,6 @@ func parseStatsFromString(output string) (*Devices, error) {
 func updateTemperatureForDevices(devices *[]Metadata) {
 	for i := range *devices {
 		temp, err := getNVMeTemperature((*devices)[i].DEVICE)
-		fmt.Printf("Device: %s, Temperature: %d\n", (*devices)[i].DEVICE, temp)
 		if err != nil {
 			log.Error().Err(err).Msgf("Error getting temperature for device %s", (*devices)[i].DEVICE)
 			continue
@@ -344,12 +365,14 @@ func getNVMeTemperature(deviceName string) (int, error) {
 	cmd := exec.Command("nvme", "smart-log", deviceName, "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
-		return 0, fmt.Errorf("error executing nvme smart-log: %v", err)
+		log.Error().Err(err).Msgf("error executing nvme smart-log: %v", err)
+		return 0, err
 	}
 	var nvmeMetadata NvmeMetadata
 	err = json.Unmarshal(output, &nvmeMetadata)
 	if err != nil {
-		return 0, fmt.Errorf("error unmarshaling nvme smart-log output: %v", err)
+		log.Error().Err(err).Msgf("error unmarshaling nvme smart-log output: %v", err)
+		return 0, err
 	}
 
 	return nvmeMetadata.Temperature, nil
@@ -363,7 +386,8 @@ func readSysload() (float64, float64, float64, error) {
 
 	parts := strings.Fields(string(data))
 	if len(parts) < 3 {
-		return 0, 0, 0, fmt.Errorf("formato inválido en /proc/loadavg")
+		log.Error().Err(err).Msgf("invalid format in /proc/loadavg")
+		return 0, 0, 0, err
 	}
 
 	load1, err1 := strconv.ParseFloat(parts[0], 64)
@@ -371,8 +395,76 @@ func readSysload() (float64, float64, float64, error) {
 	load15, err3 := strconv.ParseFloat(parts[2], 64)
 
 	if err1 != nil || err2 != nil || err3 != nil {
-		return 0, 0, 0, fmt.Errorf("error al parsear valores")
+		log.Error().Err(err).Msgf("error parsing values")
+		return 0, 0, 0, err
 	}
 
 	return load1, load5, load15, nil
+}
+func getDeviceChannels() (map[string][]string, error) {
+	cmd := exec.Command("sh", "-c", `lsof | grep "/dev/nvme" | grep "ffmpeg" | awk '{print $2, $9}'`)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Error().Err(err).Msgf("error executing lsof command")
+		return nil, err
+	}
+
+	type entry struct {
+		pid    string
+		device string
+	}
+	lines := bytes.Split(output, []byte("\n"))
+	entries := make([]entry, 0, len(lines))
+
+	for _, line := range lines {
+		fields := strings.Fields(string(line))
+		if len(fields) < 2 {
+			continue
+		}
+		entries = append(entries, entry{pid: fields[0], device: fields[1]})
+	}
+
+	deviceChannels := make(map[string]map[string]struct{})
+	for _, e := range entries {
+		cmdPS := exec.Command("ps", "-p", e.pid, "-o", "cmd=")
+		outPS, err := cmdPS.Output()
+		if err != nil {
+			continue
+		}
+		cmdline := strings.TrimSpace(string(outPS))
+		canal := extractChannelFromCmd(cmdline)
+		if canal == "" {
+			continue
+		}
+
+		if _, ok := deviceChannels[e.device]; !ok {
+			deviceChannels[e.device] = make(map[string]struct{})
+		}
+		deviceChannels[e.device][canal] = struct{}{}
+	}
+
+	result := make(map[string][]string)
+	for device, canalesSet := range deviceChannels {
+		canales := make([]string, 0, len(canalesSet))
+		for c := range canalesSet {
+			canales = append(canales, c)
+		}
+		sort.Strings(canales)
+		result[device] = canales
+	}
+
+	return result, nil
+}
+
+func extractChannelFromCmd(cmdline string) string {
+	idx := strings.Index(cmdline, "hls/")
+	if idx == -1 {
+		return ""
+	}
+	sub := cmdline[idx+len("hls/"):]
+	parts := strings.Split(sub, "/")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
 }
