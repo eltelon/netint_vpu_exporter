@@ -2,14 +2,13 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"netint_vpu_exporter/internal/config"
 	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -132,16 +131,20 @@ func main() {
 
 	go func() {
 		for {
-			deviceToChannel, err := getDeviceChannelMap()
+			files, err := filepath.Glob("ffmpeg-*.sh")
 			if err != nil {
-				fmt.Println("Error:", err)
-				return
+				panic(err)
 			}
 
-			for device, channel := range deviceToChannel {
-				fmt.Printf("Dispositivo NVMe: %s, Canal: %s\n", device, channel)
+			for _, file := range files {
+				vpu, err := extractVPUValue(file)
+				if err != nil {
+					fmt.Printf("Error in %s: %v\n", file, err)
+					continue
+				}
+				fmt.Printf("File: %s => VPU: %s\n", file, vpu)
 			}
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Second * 1)
 		}
 	}()
 
@@ -395,59 +398,19 @@ func readSysload() (float64, float64, float64, error) {
 	return load1, load5, load15, nil
 }
 
-func getDeviceChannelMap() (map[string]string, error) {
-	cmd := exec.Command("sh", "-c", `lsof | grep "/dev/nvme" | grep "ffmpeg"`)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	devicePidCount := make(map[string]map[string]int) // device -> pid -> count
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) < 9 {
-			continue
-		}
-		pid := fields[1]
-		device := fields[8]
-
-		if _, ok := devicePidCount[device]; !ok {
-			devicePidCount[device] = make(map[string]int)
-		}
-		devicePidCount[device][pid]++
-	}
-
-	deviceToChannel := make(map[string]string)
-
-	for device, pidCounts := range devicePidCount {
-		for pid := range pidCounts {
-			channel, err := getChannelFromPid(pid)
-			if err == nil && channel != "" {
-				deviceToChannel[device] = channel
-				break // solo uno por device
-			}
-		}
-	}
-
-	return deviceToChannel, nil
-}
-
-func getChannelFromPid(pid string) (string, error) {
-	cmd := exec.Command("ps", "-p", pid, "-o", "cmd=")
-	out, err := cmd.Output()
+func extractVPUValue(filePath string) (string, error) {
+	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
 
-	cmdline := string(out)
-	re := regexp.MustCompile(`hls/([^/]+)`)
-	match := re.FindStringSubmatch(cmdline)
-	if len(match) > 1 {
-		return match[1], nil
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "VPU=") {
+			return strings.TrimPrefix(line, "VPU="), nil
+		}
 	}
-
-	return "", nil
+	return "", fmt.Errorf("VPU not found in %s", filePath)
 }
