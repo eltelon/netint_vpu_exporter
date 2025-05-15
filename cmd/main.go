@@ -404,6 +404,7 @@ func readSysload() (float64, float64, float64, error) {
 func getDeviceChannels() (map[string][]string, error) {
 	cmd := exec.Command("sh", "-c", `lsof | grep "/dev/nvme" | grep "ffmpeg" | awk '{print $2, $9}'`)
 	output, err := cmd.Output()
+	fmt.Println(string(output))
 	if err != nil {
 		log.Error().Err(err).Msgf("error executing lsof command")
 		return nil, err
@@ -433,6 +434,7 @@ func getDeviceChannels() (map[string][]string, error) {
 		}
 		cmdline := strings.TrimSpace(string(outPS))
 		canal := extractChannelFromCmd(cmdline)
+		fmt.Println(canal)
 		if canal == "" {
 			continue
 		}
