@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"netint_vpu_exporter/internal/config"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -93,8 +94,9 @@ func (c *Metadata) GetVal(field string) (int, error) {
 }
 
 var (
-	listenAddr = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9836").String()
-	logLevel   = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").String()
+	listenAddr   = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9836").String()
+	logLevel     = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").String()
+	sysloadGauge *prometheus.GaugeVec
 )
 
 func main() {
@@ -103,6 +105,13 @@ func main() {
 	config.ConfigureZeroLog(*logLevel)
 
 	registry := prometheus.NewRegistry()
+	sysloadGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "netint_encoder_sysload",
+			Help: "System load average of the encoder host",
+		},
+		[]string{"interval"},
+	)
 	prometheusCounters := PrometheusCounters{
 		DecoderCounters: make(map[string]*prometheus.GaugeVec),
 		EncoderCounters: make(map[string]*prometheus.GaugeVec),
@@ -187,6 +196,14 @@ func runCollector(prometheusCounters *PrometheusCounters) {
 	updateMetrics(devices.Encoders, prometheusCounters.EncoderCounters)
 	updateMetrics(devices.Scalers, prometheusCounters.ScalerCounters)
 	updateMetrics(devices.AIs, prometheusCounters.AICounters)
+	load1, load5, load15, err := readSysload()
+	if err != nil {
+		log.Error().Err(err).Msg("Error leyendo carga del sistema")
+	} else {
+		sysloadGauge.WithLabelValues("1m").Set(load1)
+		sysloadGauge.WithLabelValues("5m").Set(load5)
+		sysloadGauge.WithLabelValues("15m").Set(load15)
+	}
 
 	log.Debug().Msg("Metrics updated")
 }
@@ -335,4 +352,26 @@ func getNVMeTemperature(deviceName string) (int, error) {
 	}
 
 	return nvmeMetadata.Temperature, nil
+}
+
+func readSysload() (float64, float64, float64, error) {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	parts := strings.Fields(string(data))
+	if len(parts) < 3 {
+		return 0, 0, 0, fmt.Errorf("formato inválido en /proc/loadavg")
+	}
+
+	load1, err1 := strconv.ParseFloat(parts[0], 64)
+	load5, err2 := strconv.ParseFloat(parts[1], 64)
+	load15, err3 := strconv.ParseFloat(parts[2], 64)
+
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0, 0, 0, fmt.Errorf("error al parsear valores")
+	}
+
+	return load1, load5, load15, nil
 }
