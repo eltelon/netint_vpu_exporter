@@ -95,9 +95,10 @@ func (c *Metadata) GetVal(field string) (int, error) {
 }
 
 var (
-	listenAddr   = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9836").String()
-	logLevel     = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").String()
-	sysloadGauge *prometheus.GaugeVec
+	listenAddr     = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9836").String()
+	logLevel       = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").String()
+	sysloadGauge   *prometheus.GaugeVec
+	channelXDevice *prometheus.GaugeVec
 )
 
 func main() {
@@ -113,7 +114,15 @@ func main() {
 		},
 		[]string{"interval"},
 	)
+	channelXDevice = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "netint_encoder_channel_device",
+			Help: "channel to device mapping",
+		},
+		[]string{"channel", "device"},
+	)
 	registry.MustRegister(sysloadGauge)
+	registry.MustRegister(channelXDevice)
 	prometheusCounters := PrometheusCounters{
 		DecoderCounters: make(map[string]*prometheus.GaugeVec),
 		EncoderCounters: make(map[string]*prometheus.GaugeVec),
@@ -131,20 +140,21 @@ func main() {
 
 	go func() {
 		for {
-			files, err := filepath.Glob("ffmpeg-*.sh")
+			files, err := filepath.Glob("/home/scripts/ffmpeg-*.sh")
 			if err != nil {
-				panic(err)
+				log.Error().Err(err).Msg("Error finding ffmpeg scripts")
+				continue
 			}
-
 			for _, file := range files {
 				vpu, err := extractVPUValue(file)
 				if err != nil {
-					fmt.Printf("Error in %s: %v\n", file, err)
 					continue
 				}
-				fmt.Printf("File: %s => VPU: %s\n", file, vpu)
+				vpu = strings.Trim(vpu, "\"")
+				channel := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(file), "ffmpeg-"), ".sh")
+				channelXDevice.WithLabelValues(channel, "/dev/nvme"+vpu).Set(1)
 			}
-			time.Sleep(time.Second * 1)
+			time.Sleep(500 * time.Millisecond)
 		}
 	}()
 
