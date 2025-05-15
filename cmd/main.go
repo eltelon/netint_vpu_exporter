@@ -112,6 +112,7 @@ func main() {
 		},
 		[]string{"interval"},
 	)
+	registry.MustRegister(sysloadGauge)
 	prometheusCounters := PrometheusCounters{
 		DecoderCounters: make(map[string]*prometheus.GaugeVec),
 		EncoderCounters: make(map[string]*prometheus.GaugeVec),
