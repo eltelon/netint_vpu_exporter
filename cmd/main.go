@@ -148,6 +148,8 @@ func main() {
 			for _, file := range files {
 				vpu, err := extractVPUValue(file)
 				if err != nil {
+					channel := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(file), "ffmpeg-"), ".sh")
+					channelXDevice.WithLabelValues(channel, "CPU").Set(1)
 					continue
 				}
 				vpu = strings.Trim(vpu, "\"")
