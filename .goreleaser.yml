@@ -1,0 +1,35 @@
+version: 2 
+
+project_name: netint_vpu_exporter
+
+release:
+  github:
+    owner: eltelon 
+    name: netint_vpu_exporter
+  draft: false
+  prerelease: false
+
+builds:
+  - id: netint
+    main: ./cmd/main.go
+    goos:
+      - linux
+    goarch:
+      - amd64 
+      - arm64 
+    ldflags:
+      - "-s -w -X main.version={{.Version}}"
+    binary: netint_vpu_exporter
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: git
