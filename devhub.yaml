@@ -1,0 +1,13 @@
+name: netint_vpu_exporter
+domain: platform
+description: Prometheus exporter that collects metrics from Netint VPU devices (decoders, encoders, scalers, AI accelerators) and exposes them via HTTP.
+dependencies:
+  infrastructure:
+    - name: prometheus
+      usage: Metrics
+docs:
+  - title: README
+    path: README.md
+owner:
+  team: Video
+  lead: claudio@zapping.com
